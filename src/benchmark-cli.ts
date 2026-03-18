@@ -65,9 +65,12 @@ function formatTable(results: BenchmarkResult[]): string {
 
 function tryOpen(filePath: string): void {
   try {
-    const cmd = process.platform === "win32" ? "start" :
-                process.platform === "darwin" ? "open" : "xdg-open";
-    execSync(`${cmd} "${filePath}"`, { stdio: "ignore" });
+    if (process.platform === "win32") {
+      execSync(`start "" "${filePath}"`, { stdio: "ignore" });
+    } else {
+      const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+      execSync(`${cmd} "${filePath}"`, { stdio: "ignore" });
+    }
   } catch { /* best-effort */ }
 }
 

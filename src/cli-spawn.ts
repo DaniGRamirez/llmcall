@@ -44,19 +44,26 @@ export function resolveExecutable(cmd: string): ResolvedExecutable {
 
     const cmdContent = readFileSync(cmdPath, "utf-8");
 
-    // Pattern 1: npm-installed node script
-    // e.g. "%~dp0\node_modules\.bin\claude" or node "%~dp0\..\package\cli.js"
-    // Look for node invocations: node "path\to\script.js"
-    const nodeScriptMatch = cmdContent.match(/node\s+"([^"]+\.js)"/i);
-    if (nodeScriptMatch) {
-      const scriptPath = nodeScriptMatch[1];
-      // Handle %~dp0 expansion: replace with directory of .cmd file
-      const cmdDir = cmdPath.replace(/[/\\][^/\\]+\.cmd$/i, "");
-      const resolvedScript = scriptPath.replace(/%~dp0/gi, cmdDir + "\\");
-      // Normalize path separators and resolve relative segments
-      const normalizedScript = resolvedScript.replace(/\//g, "\\");
-      if (existsSync(normalizedScript)) {
-        return { command: "node", args: [normalizedScript], shell: false };
+    // Pattern 1a: direct node invocation — node "path\to\script.js"
+    // Pattern 1b: npm global .cmd wrapper — "%_prog%"  "%dp0%\node_modules\...\index.js"
+    const cmdDir = cmdPath.replace(/[/\\][^/\\]+\.cmd$/i, "");
+
+    // Try both patterns: literal "node" and "%_prog%" (which resolves to node)
+    const scriptPatterns = [
+      /node\s+"([^"]+\.js)"/i,
+      /"%_prog%"\s+"([^"]+\.js)"/i,
+    ];
+    for (const pattern of scriptPatterns) {
+      const match = cmdContent.match(pattern);
+      if (match) {
+        const scriptPath = match[1];
+        const resolvedScript = scriptPath
+          .replace(/%~dp0/gi, cmdDir + "\\")
+          .replace(/%dp0%/gi, cmdDir + "\\")
+          .replace(/\//g, "\\");
+        if (existsSync(resolvedScript)) {
+          return { command: "node", args: [resolvedScript], shell: false };
+        }
       }
     }
 
