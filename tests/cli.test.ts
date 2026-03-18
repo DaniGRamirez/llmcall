@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../src/cli.js";
+import { parseArgs, isBenchmarkCommand } from "../src/cli.js";
 
 describe("cli arg parsing", () => {
   it("parses bare prompt", () => {
@@ -33,5 +33,13 @@ describe("cli arg parsing", () => {
   it("parses --system", () => {
     const args = parseArgs(["hello", "--system", "You are a translator"]);
     expect(args.system).toBe("You are a translator");
+  });
+});
+
+describe("benchmark subcommand detection", () => {
+  it("detects benchmark subcommand", () => {
+    expect(isBenchmarkCommand(["benchmark", "hello"])).toBe(true);
+    expect(isBenchmarkCommand(["hello"])).toBe(false);
+    expect(isBenchmarkCommand(["--help"])).toBe(false);
   });
 });

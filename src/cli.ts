@@ -4,6 +4,7 @@ import { hideBin } from "yargs/helpers";
 import { createProvider } from "./factory.js";
 import { selectModel } from "./selector.js";
 import { loadConfig } from "./config.js";
+import { benchmarkCommand } from "./benchmark-cli.js";
 import type { ProviderName, TierName } from "./types.js";
 
 export interface CliArgs {
@@ -130,11 +131,23 @@ async function main() {
   }
 }
 
+export function isBenchmarkCommand(argv: string[]): boolean {
+  return argv[0] === "benchmark";
+}
+
 // Only run when executed directly, not when imported (e.g., in tests)
 const isMain = process.argv[1] && import.meta.url.endsWith(
   process.argv[1].replace(/\\/g, "/").replace(/^[A-Z]:/, "")
 ) || process.argv[1]?.endsWith("cli.js") || process.argv[1]?.endsWith("cli.ts");
 
 if (isMain) {
-  main();
+  const argv = hideBin(process.argv);
+  if (isBenchmarkCommand(argv)) {
+    benchmarkCommand(argv.slice(1)).catch((err: any) => {
+      process.stderr.write(`Error: ${err.message}\n`);
+      process.exit(1);
+    });
+  } else {
+    main();
+  }
 }
