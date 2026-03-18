@@ -106,7 +106,9 @@ async function main() {
 
     if (args.json) {
       try {
-        const parsed = JSON.parse(result);
+        // Strip markdown code blocks that LLMs often wrap JSON in
+        const cleaned = result.replace(/^```(?:json)?\n?/gm, "").replace(/```\s*$/gm, "").trim();
+        const parsed = JSON.parse(cleaned);
         if (args.schema) {
           validateAgainstSchema(parsed, args.schema);
         }
