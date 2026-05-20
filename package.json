@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "llmcall": "dist/cli.js"
+    "llmcall": "dist/cli.js",
+    "llmcall-fast": "bin/llmcall-fast"
   },
   "exports": {
     ".": {

@@ -5,6 +5,7 @@ import { createProvider } from "./factory.js";
 import { selectModel } from "./selector.js";
 import { loadConfig } from "./config.js";
 import { benchmarkCommand } from "./benchmark-cli.js";
+import { isServerRunning, callViaServer, spawnServer } from "./client.js";
 import type { ProviderName, TierName } from "./types.js";
 
 export interface CliArgs {
@@ -67,64 +68,89 @@ export function parseArgs(argv: string[]): CliArgs {
   };
 }
 
+async function mainViaServer(args: CliArgs): Promise<boolean> {
+  if (!(await isServerRunning())) return false;
+
+  let prompt = args.prompt;
+  if (args.json && !args.schema) {
+    prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation.";
+  }
+
+  const result = await callViaServer(prompt, {
+    provider: args.provider,
+    model: args.model,
+    tier: args.tier,
+    system: args.system,
+  });
+
+  outputResult(result, args);
+  return true;
+}
+
+function outputResult(result: string, args: CliArgs): void {
+  if (args.json) {
+    const cleaned = result.replace(/^```(?:json)?\n?/gm, "").replace(/```\s*$/gm, "").trim();
+    const parsed = JSON.parse(cleaned);
+    if (args.schema) {
+      validateAgainstSchema(parsed, args.schema);
+    }
+    process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
+  } else {
+    process.stdout.write(result + "\n");
+  }
+}
+
+async function mainDirect(args: CliArgs): Promise<string> {
+  const config = loadConfig();
+
+  let provider: ProviderName;
+  let model: string;
+
+  if (args.provider && args.model) {
+    provider = args.provider;
+    model = args.model;
+  } else if (args.tier) {
+    const tierOverride = config.tiers?.[args.tier];
+    if (tierOverride) {
+      provider = tierOverride.provider;
+      model = tierOverride.model;
+    } else {
+      const spec = await selectModel({ tier: args.tier });
+      provider = spec.provider;
+      model = spec.model;
+    }
+  } else if (config.default) {
+    provider = config.default.provider;
+    model = config.default.model;
+  } else {
+    process.stderr.write("Error: specify --provider/--model, --tier, or set default in ~/.llmcall/config.yaml\n");
+    process.exit(1);
+  }
+
+  const llm = createProvider({ provider, model });
+
+  let prompt = args.prompt;
+  if (args.json && !args.schema) {
+    prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation.";
+  }
+
+  return llm.generateText(prompt, { system: args.system });
+}
+
 async function main() {
   try {
     const args = parseArgs(hideBin(process.argv));
-    const config = loadConfig();
 
-    let provider: ProviderName;
-    let model: string;
+    // Fast path: delegate to warm server
+    if (await mainViaServer(args)) return;
 
-    if (args.provider && args.model) {
-      provider = args.provider;
-      model = args.model;
-    } else if (args.tier) {
-      const tierOverride = config.tiers?.[args.tier];
-      if (tierOverride) {
-        provider = tierOverride.provider;
-        model = tierOverride.model;
-      } else {
-        const spec = await selectModel({ tier: args.tier });
-        provider = spec.provider;
-        model = spec.model;
-      }
-    } else if (config.default) {
-      provider = config.default.provider;
-      model = config.default.model;
-    } else {
-      process.stderr.write("Error: specify --provider/--model, --tier, or set default in ~/.llmcall/config.yaml\n");
-      process.exit(1);
-    }
+    // Slow path: direct call + spawn server for next time
+    const result = await mainDirect(args);
+    outputResult(result, args);
 
-    const llm = createProvider({ provider, model });
-
-    let prompt = args.prompt;
-    if (args.json && !args.schema) {
-      prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation.";
-    }
-
-    const result = await llm.generateText(prompt, { system: args.system });
-
-    if (args.json) {
-      try {
-        // Strip markdown code blocks that LLMs often wrap JSON in
-        const cleaned = result.replace(/^```(?:json)?\n?/gm, "").replace(/```\s*$/gm, "").trim();
-        const parsed = JSON.parse(cleaned);
-        if (args.schema) {
-          validateAgainstSchema(parsed, args.schema);
-        }
-        process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
-      } catch (e: any) {
-        if (e instanceof SyntaxError) {
-          process.stderr.write(`Error: response is not valid JSON:\n${result}\n`);
-        } else {
-          process.stderr.write(`Error: ${e.message}\n`);
-        }
-        process.exit(1);
-      }
-    } else {
-      process.stdout.write(result + "\n");
-    }
+    // Spawn server in background for future calls
+    await spawnServer();
+    process.stderr.write("⚡ llmcall server started — next calls will be faster\n");
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
@@ -135,6 +161,10 @@ export function isBenchmarkCommand(argv: string[]): boolean {
   return argv[0] === "benchmark";
 }
 
+export function isServeCommand(argv: string[]): boolean {
+  return argv[0] === "serve";
+}
+
 // Only run when executed directly, not when imported (e.g., in tests)
 const isMain = process.argv[1] && import.meta.url.endsWith(
   process.argv[1].replace(/\\/g, "/").replace(/^[A-Z]:/, "")
@@ -142,7 +172,13 @@ const isMain = process.argv[1] && import.meta.url.endsWith(
 
 if (isMain) {
   const argv = hideBin(process.argv);
-  if (isBenchmarkCommand(argv)) {
+  if (isServeCommand(argv)) {
+    import("./serve.js").then(({ startServer }) => {
+      const portFlag = argv.indexOf("--port");
+      const port = portFlag !== -1 ? Number(argv[portFlag + 1]) : undefined;
+      startServer(port);
+    });
+  } else if (isBenchmarkCommand(argv)) {
     benchmarkCommand(argv.slice(1)).catch((err: any) => {
       process.stderr.write(`Error: ${err.message}\n`);
       process.exit(1);
